@@ -1,0 +1,221 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code 与 Codex CLI 自定义 Base URL 配置指南（ANTHROPIC_BASE_URL、config.toml）及报错排查</title><meta name="description" content="Claude Code 设置 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN，Codex CLI 在 config.toml 配置 model_providers，接入任意 API 中转站、LLM 网关或代理；排查 404、401、/v1/v1、返回 HTML、wire_api 报错。">
+<link rel="canonical" href="https://ethan-cur.github.io/claude-code-custom-base-url/zh/">
+<link rel="alternate" hreflang="en" href="https://ethan-cur.github.io/claude-code-custom-base-url/">
+<link rel="alternate" hreflang="zh" href="https://ethan-cur.github.io/claude-code-custom-base-url/zh/">
+<link rel="alternate" hreflang="ru" href="https://ethan-cur.github.io/claude-code-custom-base-url/ru/">
+<link rel="alternate" hreflang="pt" href="https://ethan-cur.github.io/claude-code-custom-base-url/pt/">
+<link rel="alternate" hreflang="ko" href="https://ethan-cur.github.io/claude-code-custom-base-url/ko/">
+<link rel="alternate" hreflang="x-default" href="https://ethan-cur.github.io/claude-code-custom-base-url/">
+<style>body{margin:0;font:16px/1.65 system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans",sans-serif;color:#1f2328}main{max-width:920px;margin:0 auto;padding:22px 18px 60px}
+a{color:#0969da}nav{font-size:14px;padding:8px 0;border-bottom:1px solid #d8dee4;margin-bottom:8px}pre{background:#f6f8fa;padding:12px;border-radius:6px;overflow:auto;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+code{background:#f6f8fa;padding:1px 4px;border-radius:4px;font-size:90%}pre code{background:none;padding:0}table{border-collapse:collapse;display:block;overflow:auto}
+td,th{border:1px solid #d0d7de;padding:6px 10px;vertical-align:top}th{background:#f6f8fa}h1,h2{border-bottom:1px solid #d8dee4;padding-bottom:.3em}</style></head>
+<body><main><nav><a href="https://ethan-cur.github.io/claude-code-custom-base-url/" hreflang="en">English</a> · <b>中文</b> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/ru/" hreflang="ru">Русский</a> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/pt/" hreflang="pt">Português</a> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/ko/" hreflang="ko">한국어</a> · <a href="https://github.com/ethan-cur/claude-code-custom-base-url">GitHub</a></nav>
+<h1>Claude Code 与 Codex CLI 自定义 Base URL 配置指南</h1>
+<p>把 <strong>Claude Code</strong>、<strong>Codex CLI</strong>（以及任意 OpenAI SDK）接到 API 中转站、LLM 网关、公司代理或自建路由上的完整步骤，附常见报错排查表。内容不绑定任何服务商，2026 年 11 月对照官方文档核对。</p>
+<p>快捷工具：<a href="https://ethan-cur.github.io/claude-code-config-generator/" rel="nofollow">配置生成器</a> · <a href="https://ethan-cur.github.io/llm-endpoint-check/" rel="nofollow">端点检测脚本</a></p>
+<h2>1. 哪个地址填在哪里</h2>
+<p>每个客户端都会在 Base URL 后面自动拼上自己的路径。大多数"连不上"都是前缀填错了。</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>客户端</th>
+<th>配置项</th>
+<th>客户端自动拼接</th>
+<th>常见填法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code</td>
+<td><code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td><code class="notranslate">/v1/messages</code></td>
+<td><code class="notranslate">https://gateway.example.com</code>（不带 <code class="notranslate">/v1</code>）</td>
+</tr>
+<tr>
+<td>Codex CLI</td>
+<td><code class="notranslate">[model_providers.&lt;id&gt;]</code> 里的 <code class="notranslate">base_url</code></td>
+<td><code class="notranslate">/responses</code></td>
+<td><code class="notranslate">https://gateway.example.com/v1</code></td>
+</tr>
+<tr>
+<td>OpenAI SDK、Cursor、Cline（OpenAI 模式）</td>
+<td><code class="notranslate">base_url</code> / <code class="notranslate">baseURL</code> / <code class="notranslate">OPENAI_BASE_URL</code></td>
+<td><code class="notranslate">/chat/completions</code>、<code class="notranslate">/models</code></td>
+<td><code class="notranslate">https://gateway.example.com/v1</code></td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>以你所用网关的文档为准：有些服务用自己的前缀（例如 <code class="notranslate">/api</code>、<code class="notranslate">/openai</code>）。</p>
+<h2>2. Claude Code</h2>
+<p>Claude Code 读取以下环境变量（<a href="https://code.claude.com/docs/en/env-vars" rel="nofollow">官方列表</a>）：</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>变量</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td>请求发往这个地址，而不是 <code class="notranslate">api.anthropic.com</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_AUTH_TOKEN</code></td>
+<td>以 <code class="notranslate">Authorization: Bearer &lt;值&gt;</code> 发送，多数中转站用这个</td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_API_KEY</code></td>
+<td>以 <code class="notranslate">X-Api-Key</code> 发送，网关要求这个请求头时使用</td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_MODEL</code></td>
+<td>可选：启动时使用的模型</td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>macOS / Linux：</p>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> ANTHROPIC_BASE_URL=<span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span>
+<span class="pl-k">export</span> ANTHROPIC_AUTH_TOKEN=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+claude -p <span class="pl-s"><span class="pl-pds">"</span>Reply with: pong<span class="pl-pds">"</span></span></pre></div>
+<p>Windows PowerShell（永久生效，设置后新开一个终端）：</p>
+<div class="highlight highlight-source-powershell"><pre class="notranslate">[<span class="pl-k">Environment</span>]::SetEnvironmentVariable(<span class="pl-s"><span class="pl-pds">"</span>ANTHROPIC_BASE_URL<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>User<span class="pl-pds">"</span></span>)
+[<span class="pl-k">Environment</span>]::SetEnvironmentVariable(<span class="pl-s"><span class="pl-pds">"</span>ANTHROPIC_AUTH_TOKEN<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>User<span class="pl-pds">"</span></span>)</pre></div>
+<p>也可以写进 <code class="notranslate">~/.claude/settings.json</code>，无论从终端、VS Code 还是 JetBrains 启动都会生效：</p>
+<div class="highlight highlight-source-json"><pre class="notranslate">{
+  <span class="pl-ent">"env"</span>: {
+    <span class="pl-ent">"ANTHROPIC_BASE_URL"</span>: <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span>,
+    <span class="pl-ent">"ANTHROPIC_AUTH_TOKEN"</span>: <span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+  }
+}</pre></div>
+<p>注意：</p>
+<ul>
+<li>多数情况下 <code class="notranslate">settings.json</code> 的 <code class="notranslate">env</code> 会覆盖 shell 里的同名变量。改了没效果时，两处都检查一下。</li>
+<li><code class="notranslate">ANTHROPIC_AUTH_TOKEN</code> 和 <code class="notranslate">ANTHROPIC_API_KEY</code> 只设一个，除非网关要求两个都有。</li>
+<li>官方文档说明：<code class="notranslate">ANTHROPIC_BASE_URL</code> 指向 <code class="notranslate">api.anthropic.com</code> 以外的地址时，Remote Control 功能不可用。</li>
+</ul>
+<h2>3. Codex CLI</h2>
+<p>在 <code class="notranslate">~/.codex/config.toml</code> 里加一个自定义 provider（<a href="https://developers.openai.com/codex/config-advanced" rel="nofollow">官方文档</a>）：</p>
+<div class="highlight highlight-source-toml"><pre class="notranslate"><span class="pl-smi">model_provider</span> = <span class="pl-s"><span class="pl-pds">"</span>mygateway<span class="pl-pds">"</span></span>
+<span class="pl-smi">model</span> = <span class="pl-s"><span class="pl-pds">"</span>MODEL_ID<span class="pl-pds">"</span></span>
+
+[<span class="pl-en">model_providers</span>.<span class="pl-en">mygateway</span>]
+<span class="pl-smi">name</span> = <span class="pl-s"><span class="pl-pds">"</span>mygateway<span class="pl-pds">"</span></span>
+<span class="pl-smi">base_url</span> = <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com/v1<span class="pl-pds">"</span></span>
+<span class="pl-smi">wire_api</span> = <span class="pl-s"><span class="pl-pds">"</span>responses<span class="pl-pds">"</span></span>
+<span class="pl-smi">env_key</span> = <span class="pl-s"><span class="pl-pds">"</span>MYGATEWAY_API_KEY<span class="pl-pds">"</span></span></pre></div>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> MYGATEWAY_API_KEY=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+codex</pre></div>
+<p>说明：</p>
+<ul>
+<li>Codex 请求的是 <code class="notranslate">POST {base_url}/responses</code>。当前版本只支持 <code class="notranslate">wire_api = "responses"</code>，所以端点必须实现 OpenAI <strong>Responses</strong> 接口，只支持 Chat Completions 的网关用不了。</li>
+<li>有些服务的文档用 <code class="notranslate">requires_openai_auth = true</code> 加 <code class="notranslate">~/.codex/auth.json</code>（内容 <code class="notranslate">{"OPENAI_API_KEY": "YOUR_API_KEY"}</code>）代替 <code class="notranslate">env_key</code>。两种方式二选一。</li>
+<li><code class="notranslate">openai</code>、<code class="notranslate">ollama</code>、<code class="notranslate">lmstudio</code> 是保留的 provider ID。如果只想把内置 OpenAI provider 指到代理，官方提供 <code class="notranslate">openai_base_url = "..."</code>。</li>
+</ul>
+<h2>4. OpenAI SDK 和其他客户端</h2>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> OPENAI_BASE_URL=<span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com/v1<span class="pl-pds">"</span></span>
+<span class="pl-k">export</span> OPENAI_API_KEY=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span></pre></div>
+<div class="highlight highlight-source-python"><pre class="notranslate"><span class="pl-k">from</span> <span class="pl-s1">openai</span> <span class="pl-k">import</span> <span class="pl-v">OpenAI</span>
+<span class="pl-s1">client</span> <span class="pl-c1">=</span> <span class="pl-en">OpenAI</span>(<span class="pl-s1">base_url</span><span class="pl-c1">=</span><span class="pl-s">"https://gateway.example.com/v1"</span>, <span class="pl-s1">api_key</span><span class="pl-c1">=</span><span class="pl-s">"YOUR_API_KEY"</span>)</pre></div>
+<h2>5. 先测端点，再怀疑工具</h2>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-c"><span class="pl-c">#</span> OpenAI 侧：正常的 API 不带 key 返回 401 JSON，带 key 返回模型列表</span>
+curl -sS https://gateway.example.com/v1/models -H <span class="pl-s"><span class="pl-pds">"</span>Authorization: Bearer <span class="pl-smi">$KEY</span><span class="pl-pds">"</span></span>
+
+<span class="pl-c"><span class="pl-c">#</span> Anthropic 侧（Claude Code 实际调用的接口）</span>
+curl -sS https://gateway.example.com/v1/messages \
+  -H <span class="pl-s"><span class="pl-pds">"</span>Authorization: Bearer <span class="pl-smi">$KEY</span><span class="pl-pds">"</span></span> -H <span class="pl-s"><span class="pl-pds">"</span>anthropic-version: 2023-06-01<span class="pl-pds">"</span></span> \
+  -H <span class="pl-s"><span class="pl-pds">"</span>content-type: application/json<span class="pl-pds">"</span></span> \
+  -d <span class="pl-s"><span class="pl-pds">'</span>{"model":"MODEL_ID","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}<span class="pl-pds">'</span></span></pre></div>
+<p>或者用 <a href="https://github.com/ethan-cur/llm-endpoint-check">llm-endpoint-check</a> 一次跑完所有检查并测延迟。</p>
+<h2>6. 常见问题排查</h2>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>现象</th>
+<th>可能原因</th>
+<th>解决</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="notranslate">404 Not Found</code></td>
+<td>前缀错误</td>
+<td>Claude Code 的 Base URL <strong>不带</strong> <code class="notranslate">/v1</code>；Codex / SDK 一般<strong>带</strong> <code class="notranslate">/v1</code>。以网关文档为准</td>
+</tr>
+<tr>
+<td>地址里出现 <code class="notranslate">/v1/v1/</code></td>
+<td><code class="notranslate">/v1</code> 重复</td>
+<td>从 Base URL 里去掉 <code class="notranslate">/v1</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">401</code> / <code class="notranslate">invalid x-api-key</code></td>
+<td>Key 错误或请求头类型不对</td>
+<td>在 <code class="notranslate">ANTHROPIC_AUTH_TOKEN</code>（Bearer）和 <code class="notranslate">ANTHROPIC_API_KEY</code>（X-Api-Key）之间切换试试；检查 Key 里有没有空格或引号</td>
+</tr>
+<tr>
+<td>返回 200 但内容是 HTML 页面</td>
+<td>不是 API 路由，或网关在没带 Key 时显示介绍页</td>
+<td>修正路径；确认当前终端里确实设置了 Key 变量</td>
+</tr>
+<tr>
+<td><code class="notranslate">301</code> / <code class="notranslate">302</code></td>
+<td><code class="notranslate">http</code>/<code class="notranslate">https</code> 或末尾斜杠不对</td>
+<td>填最终地址；很多客户端遇到跳转会丢掉 POST 请求体</td>
+</tr>
+<tr>
+<td><code class="notranslate">model not found</code> / <code class="notranslate">model not available on this endpoint</code></td>
+<td>该模型不走这个协议</td>
+<td>用 <code class="notranslate">GET /models</code> 返回的 ID；很多中转站的 Claude 模型只能走 Anthropic 路径</td>
+</tr>
+<tr>
+<td>Codex 报 <code class="notranslate">wire_api</code> 或 <code class="notranslate">/chat/completions</code> 相关错误</td>
+<td>旧配置里写了 <code class="notranslate">wire_api = "chat"</code></td>
+<td>改成 <code class="notranslate">wire_api = "responses"</code>，并使用支持 Responses 的端点</td>
+</tr>
+<tr>
+<td>Claude Code 仍在用订阅账号</td>
+<td>Base URL 没生效</td>
+<td>检查 <code class="notranslate">settings.json</code> 的 <code class="notranslate">env</code>，重启 <code class="notranslate">claude</code>；Windows 要新开终端</td>
+</tr>
+<tr>
+<td>卡住然后超时</td>
+<td>网络 / 防火墙 / 地区</td>
+<td>换网关的其他地区节点；在公司代理后面时设置 <code class="notranslate">HTTPS_PROXY</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">429</code> / <code class="notranslate">402</code></td>
+<td>限流 / 额度用完</td>
+<td>稍等、降低并发或充值</td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<h2>7. 示例：qcode.cc</h2>
+<p>qcode.cc（本页维护方）一个 Key 同时支持两种协议，用不同路径前缀区分，有三个接入域名（<code class="notranslate">api.qcode.cc</code> 全球智能路由、<code class="notranslate">asia.qcode.cc</code> 亚洲、<code class="notranslate">us.qcode.cc</code> 北美 / 欧洲）。以下取自<a href="https://docs.qcode.cc/docs/getting-started/endpoints-and-api-paths" rel="nofollow">官方文档</a>：</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>客户端</th>
+<th>填写值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code <code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td><code class="notranslate">https://api.qcode.cc/api</code></td>
+</tr>
+<tr>
+<td>Codex CLI <code class="notranslate">base_url</code></td>
+<td><code class="notranslate">https://api.qcode.cc/openai</code></td>
+</tr>
+<tr>
+<td>OpenAI SDK <code class="notranslate">base_url</code></td>
+<td><code class="notranslate">https://api.qcode.cc/openai/v1</code></td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>Claude 模型只能走 Anthropic 路径，GPT 模型只能走 OpenAI 路径。了解更多：<a href="https://qcode.cc" rel="nofollow">https://qcode.cc</a></p>
+<hr>
+<p>本页由 <a href="https://qcode.cc" rel="nofollow">qcode.cc</a>（面向 Claude Code 与 Codex CLI 的 API 中转服务）运营团队维护。除第 7 节外，内容适用于任何端点。欢迎在 <a href="https://github.com/ethan-cur/claude-code-custom-base-url">GitHub</a> 指正。联系：<a href="mailto:hi@qcode.cc">hi@qcode.cc</a> · MIT 许可证</p>
+</main></body></html>

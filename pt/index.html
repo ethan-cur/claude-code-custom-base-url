@@ -1,0 +1,221 @@
+<!doctype html><html lang="pt"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code e Codex CLI com Base URL própria (ANTHROPIC_BASE_URL, config.toml) + solução de problemas</title><meta name="description" content="Configure ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN no Claude Code e model_providers no config.toml do Codex CLI para usar qualquer relay de API, gateway de LLM ou proxy. Corrija 404, 401, /v1/v1, respostas HTML e erros de wire_api.">
+<link rel="canonical" href="https://ethan-cur.github.io/claude-code-custom-base-url/pt/">
+<link rel="alternate" hreflang="en" href="https://ethan-cur.github.io/claude-code-custom-base-url/">
+<link rel="alternate" hreflang="zh" href="https://ethan-cur.github.io/claude-code-custom-base-url/zh/">
+<link rel="alternate" hreflang="ru" href="https://ethan-cur.github.io/claude-code-custom-base-url/ru/">
+<link rel="alternate" hreflang="pt" href="https://ethan-cur.github.io/claude-code-custom-base-url/pt/">
+<link rel="alternate" hreflang="ko" href="https://ethan-cur.github.io/claude-code-custom-base-url/ko/">
+<link rel="alternate" hreflang="x-default" href="https://ethan-cur.github.io/claude-code-custom-base-url/">
+<style>body{margin:0;font:16px/1.65 system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans",sans-serif;color:#1f2328}main{max-width:920px;margin:0 auto;padding:22px 18px 60px}
+a{color:#0969da}nav{font-size:14px;padding:8px 0;border-bottom:1px solid #d8dee4;margin-bottom:8px}pre{background:#f6f8fa;padding:12px;border-radius:6px;overflow:auto;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+code{background:#f6f8fa;padding:1px 4px;border-radius:4px;font-size:90%}pre code{background:none;padding:0}table{border-collapse:collapse;display:block;overflow:auto}
+td,th{border:1px solid #d0d7de;padding:6px 10px;vertical-align:top}th{background:#f6f8fa}h1,h2{border-bottom:1px solid #d8dee4;padding-bottom:.3em}</style></head>
+<body><main><nav><a href="https://ethan-cur.github.io/claude-code-custom-base-url/" hreflang="en">English</a> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/zh/" hreflang="zh">中文</a> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/ru/" hreflang="ru">Русский</a> · <b>Português</b> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/ko/" hreflang="ko">한국어</a> · <a href="https://github.com/ethan-cur/claude-code-custom-base-url">GitHub</a></nav>
+<h1>Claude Code e Codex CLI com uma Base URL própria</h1>
+<p>Como apontar o <strong>Claude Code</strong> e o <strong>Codex CLI</strong> (e qualquer SDK da OpenAI) para um relay de API, gateway de LLM, proxy corporativo ou roteador próprio, com uma tabela dos erros mais comuns. Neutro em relação a fornecedores; conferido com a documentação oficial em novembro de 2026.</p>
+<p>Ferramentas: <a href="https://ethan-cur.github.io/claude-code-config-generator/" rel="nofollow">gerador de configuração</a> · <a href="https://ethan-cur.github.io/llm-endpoint-check/" rel="nofollow">verificador de endpoint</a></p>
+<h2>1. Qual URL vai onde</h2>
+<p>Cada cliente acrescenta o próprio caminho à Base URL. A maioria dos problemas é prefixo errado.</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>Cliente</th>
+<th>Configuração</th>
+<th>O cliente acrescenta</th>
+<th>Valor típico</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code</td>
+<td><code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td><code class="notranslate">/v1/messages</code></td>
+<td><code class="notranslate">https://gateway.example.com</code> (sem <code class="notranslate">/v1</code>)</td>
+</tr>
+<tr>
+<td>Codex CLI</td>
+<td><code class="notranslate">base_url</code> em <code class="notranslate">[model_providers.&lt;id&gt;]</code></td>
+<td><code class="notranslate">/responses</code></td>
+<td><code class="notranslate">https://gateway.example.com/v1</code></td>
+</tr>
+<tr>
+<td>SDKs OpenAI, Cursor, Cline (modo OpenAI)</td>
+<td><code class="notranslate">base_url</code> / <code class="notranslate">baseURL</code> / <code class="notranslate">OPENAI_BASE_URL</code></td>
+<td><code class="notranslate">/chat/completions</code>, <code class="notranslate">/models</code></td>
+<td><code class="notranslate">https://gateway.example.com/v1</code></td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>A documentação do seu gateway vale mais que a coluna "típico": alguns usam prefixos próprios (por exemplo <code class="notranslate">/api</code> ou <code class="notranslate">/openai</code>).</p>
+<h2>2. Claude Code</h2>
+<p>O Claude Code lê estas variáveis de ambiente (<a href="https://code.claude.com/docs/en/env-vars" rel="nofollow">lista oficial</a>):</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>Variável</th>
+<th>Função</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td>Endpoint para onde as requisições vão, em vez de <code class="notranslate">api.anthropic.com</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_AUTH_TOKEN</code></td>
+<td>Enviado como <code class="notranslate">Authorization: Bearer &lt;valor&gt;</code>; é o que a maioria dos relays espera</td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_API_KEY</code></td>
+<td>Enviado como <code class="notranslate">X-Api-Key</code>; use se o gateway pedir esse cabeçalho</td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_MODEL</code></td>
+<td>Opcional: modelo inicial</td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>macOS / Linux:</p>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> ANTHROPIC_BASE_URL=<span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span>
+<span class="pl-k">export</span> ANTHROPIC_AUTH_TOKEN=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+claude -p <span class="pl-s"><span class="pl-pds">"</span>Reply with: pong<span class="pl-pds">"</span></span></pre></div>
+<p>Windows PowerShell (permanente; depois abra um terminal novo):</p>
+<div class="highlight highlight-source-powershell"><pre class="notranslate">[<span class="pl-k">Environment</span>]::SetEnvironmentVariable(<span class="pl-s"><span class="pl-pds">"</span>ANTHROPIC_BASE_URL<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>User<span class="pl-pds">"</span></span>)
+[<span class="pl-k">Environment</span>]::SetEnvironmentVariable(<span class="pl-s"><span class="pl-pds">"</span>ANTHROPIC_AUTH_TOKEN<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>User<span class="pl-pds">"</span></span>)</pre></div>
+<p>Ou em <code class="notranslate">~/.claude/settings.json</code>, que vale para qualquer forma de abrir o Claude Code (terminal, VS Code, JetBrains):</p>
+<div class="highlight highlight-source-json"><pre class="notranslate">{
+  <span class="pl-ent">"env"</span>: {
+    <span class="pl-ent">"ANTHROPIC_BASE_URL"</span>: <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span>,
+    <span class="pl-ent">"ANTHROPIC_AUTH_TOKEN"</span>: <span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+  }
+}</pre></div>
+<p>Bom saber:</p>
+<ul>
+<li>Na maioria das sessões, o valor do <code class="notranslate">env</code> no <code class="notranslate">settings.json</code> sobrescreve a mesma variável do shell. Se a mudança "não faz nada", confira os dois lugares.</li>
+<li>Defina só uma entre <code class="notranslate">ANTHROPIC_AUTH_TOKEN</code> e <code class="notranslate">ANTHROPIC_API_KEY</code>, a menos que o gateway exija as duas.</li>
+<li>Segundo a documentação oficial, o Remote Control fica desativado quando <code class="notranslate">ANTHROPIC_BASE_URL</code> aponta para um host diferente de <code class="notranslate">api.anthropic.com</code>.</li>
+</ul>
+<h2>3. Codex CLI</h2>
+<p>Adicione um provedor personalizado em <code class="notranslate">~/.codex/config.toml</code> (<a href="https://developers.openai.com/codex/config-advanced" rel="nofollow">documentação oficial</a>):</p>
+<div class="highlight highlight-source-toml"><pre class="notranslate"><span class="pl-smi">model_provider</span> = <span class="pl-s"><span class="pl-pds">"</span>mygateway<span class="pl-pds">"</span></span>
+<span class="pl-smi">model</span> = <span class="pl-s"><span class="pl-pds">"</span>MODEL_ID<span class="pl-pds">"</span></span>
+
+[<span class="pl-en">model_providers</span>.<span class="pl-en">mygateway</span>]
+<span class="pl-smi">name</span> = <span class="pl-s"><span class="pl-pds">"</span>mygateway<span class="pl-pds">"</span></span>
+<span class="pl-smi">base_url</span> = <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com/v1<span class="pl-pds">"</span></span>
+<span class="pl-smi">wire_api</span> = <span class="pl-s"><span class="pl-pds">"</span>responses<span class="pl-pds">"</span></span>
+<span class="pl-smi">env_key</span> = <span class="pl-s"><span class="pl-pds">"</span>MYGATEWAY_API_KEY<span class="pl-pds">"</span></span></pre></div>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> MYGATEWAY_API_KEY=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+codex</pre></div>
+<p>Observações:</p>
+<ul>
+<li>O Codex envia <code class="notranslate">POST {base_url}/responses</code>. O Codex atual só aceita <code class="notranslate">wire_api = "responses"</code>, então o endpoint precisa implementar a <strong>Responses</strong> API da OpenAI; gateways só com Chat Completions não funcionam.</li>
+<li>Em vez de <code class="notranslate">env_key</code>, alguns serviços documentam <code class="notranslate">requires_openai_auth = true</code> com <code class="notranslate">~/.codex/auth.json</code> contendo <code class="notranslate">{"OPENAI_API_KEY": "YOUR_API_KEY"}</code>. Use um método só.</li>
+<li>Os IDs <code class="notranslate">openai</code>, <code class="notranslate">ollama</code> e <code class="notranslate">lmstudio</code> são reservados. Para só mandar o provedor OpenAI embutido por um proxy, a documentação oficial oferece <code class="notranslate">openai_base_url = "..."</code>.</li>
+</ul>
+<h2>4. SDKs OpenAI e outros clientes</h2>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> OPENAI_BASE_URL=<span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com/v1<span class="pl-pds">"</span></span>
+<span class="pl-k">export</span> OPENAI_API_KEY=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span></pre></div>
+<div class="highlight highlight-source-python"><pre class="notranslate"><span class="pl-k">from</span> <span class="pl-s1">openai</span> <span class="pl-k">import</span> <span class="pl-v">OpenAI</span>
+<span class="pl-s1">client</span> <span class="pl-c1">=</span> <span class="pl-en">OpenAI</span>(<span class="pl-s1">base_url</span><span class="pl-c1">=</span><span class="pl-s">"https://gateway.example.com/v1"</span>, <span class="pl-s1">api_key</span><span class="pl-c1">=</span><span class="pl-s">"YOUR_API_KEY"</span>)</pre></div>
+<h2>5. Teste o endpoint antes de culpar a ferramenta</h2>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-c"><span class="pl-c">#</span> Lado OpenAI: sem chave, uma API saudável responde 401 em JSON; com chave, a lista de modelos</span>
+curl -sS https://gateway.example.com/v1/models -H <span class="pl-s"><span class="pl-pds">"</span>Authorization: Bearer <span class="pl-smi">$KEY</span><span class="pl-pds">"</span></span>
+
+<span class="pl-c"><span class="pl-c">#</span> Lado Anthropic (o que o Claude Code chama)</span>
+curl -sS https://gateway.example.com/v1/messages \
+  -H <span class="pl-s"><span class="pl-pds">"</span>Authorization: Bearer <span class="pl-smi">$KEY</span><span class="pl-pds">"</span></span> -H <span class="pl-s"><span class="pl-pds">"</span>anthropic-version: 2023-06-01<span class="pl-pds">"</span></span> \
+  -H <span class="pl-s"><span class="pl-pds">"</span>content-type: application/json<span class="pl-pds">"</span></span> \
+  -d <span class="pl-s"><span class="pl-pds">'</span>{"model":"MODEL_ID","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}<span class="pl-pds">'</span></span></pre></div>
+<p>Ou rode tudo de uma vez, com latência: <a href="https://github.com/ethan-cur/llm-endpoint-check">llm-endpoint-check</a>.</p>
+<h2>6. Solução de problemas</h2>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>Sintoma</th>
+<th>Causa provável</th>
+<th>Correção</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="notranslate">404 Not Found</code></td>
+<td>Prefixo errado</td>
+<td>Claude Code: Base URL <strong>sem</strong> <code class="notranslate">/v1</code>. Codex / SDKs: geralmente <strong>com</strong> <code class="notranslate">/v1</code>. Siga a documentação do gateway</td>
+</tr>
+<tr>
+<td>A URL tem <code class="notranslate">/v1/v1/</code></td>
+<td><code class="notranslate">/v1</code> duplicado</td>
+<td>Tire o <code class="notranslate">/v1</code> da Base URL</td>
+</tr>
+<tr>
+<td><code class="notranslate">401</code> / <code class="notranslate">invalid x-api-key</code></td>
+<td>Chave ou cabeçalho errado</td>
+<td>Alterne entre <code class="notranslate">ANTHROPIC_AUTH_TOKEN</code> (Bearer) e <code class="notranslate">ANTHROPIC_API_KEY</code> (X-Api-Key); confira espaços ou aspas na chave</td>
+</tr>
+<tr>
+<td>HTTP 200 com página HTML</td>
+<td>Não é rota de API, ou o gateway mostra uma landing page sem chave</td>
+<td>Corrija o caminho; confirme que a variável da chave está definida <em>neste</em> terminal</td>
+</tr>
+<tr>
+<td><code class="notranslate">301</code> / <code class="notranslate">302</code></td>
+<td><code class="notranslate">http</code> vs <code class="notranslate">https</code>, barra final</td>
+<td>Use a URL final; muitos clientes perdem o corpo do POST em redirecionamentos</td>
+</tr>
+<tr>
+<td><code class="notranslate">model not found</code> / <code class="notranslate">model not available on this endpoint</code></td>
+<td>O modelo não é servido nesse protocolo</td>
+<td>Use um ID de <code class="notranslate">GET /models</code>; em muitos relays o Claude só sai pelo caminho Anthropic</td>
+</tr>
+<tr>
+<td>Codex: erros sobre <code class="notranslate">wire_api</code> ou <code class="notranslate">/chat/completions</code></td>
+<td>Config antiga com <code class="notranslate">wire_api = "chat"</code></td>
+<td>Use <code class="notranslate">wire_api = "responses"</code> e um endpoint com Responses</td>
+</tr>
+<tr>
+<td>O Claude Code continua usando a assinatura</td>
+<td>A Base URL não foi lida</td>
+<td>Confira o <code class="notranslate">env</code> do <code class="notranslate">settings.json</code>, reinicie o <code class="notranslate">claude</code>; no Windows abra um terminal novo</td>
+</tr>
+<tr>
+<td>Trava e dá timeout</td>
+<td>Rede / firewall / região</td>
+<td>Outro endpoint regional do gateway; atrás de proxy corporativo, defina <code class="notranslate">HTTPS_PROXY</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">429</code> / <code class="notranslate">402</code></td>
+<td>Limite de taxa / cota</td>
+<td>Espere, reduza a concorrência ou recarregue</td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<h2>7. Exemplo: qcode.cc</h2>
+<p>O qcode.cc (mantenedor desta página) usa uma chave para os dois protocolos, com prefixos separados e três hosts (<code class="notranslate">api.qcode.cc</code> roteamento global, <code class="notranslate">asia.qcode.cc</code>, <code class="notranslate">us.qcode.cc</code>). Valores da <a href="https://docs.qcode.cc/docs/getting-started/endpoints-and-api-paths" rel="nofollow">documentação oficial</a>:</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>Cliente</th>
+<th>Valor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code <code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td><code class="notranslate">https://api.qcode.cc/api</code></td>
+</tr>
+<tr>
+<td>Codex CLI <code class="notranslate">base_url</code></td>
+<td><code class="notranslate">https://api.qcode.cc/openai</code></td>
+</tr>
+<tr>
+<td>SDK OpenAI <code class="notranslate">base_url</code></td>
+<td><code class="notranslate">https://api.qcode.cc/openai/v1</code></td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>Modelos Claude só pelo caminho Anthropic; modelos GPT só pelo caminho OpenAI. Mais: <a href="https://qcode.cc" rel="nofollow">https://qcode.cc</a></p>
+<hr>
+<p>Mantido pela equipe que opera o <a href="https://qcode.cc" rel="nofollow">qcode.cc</a>, um relay de API para Claude Code e Codex CLI. Tudo, exceto a seção 7, vale para qualquer endpoint. Correções pelo <a href="https://github.com/ethan-cur/claude-code-custom-base-url">GitHub</a>. Contato: <a href="mailto:hi@qcode.cc">hi@qcode.cc</a> · Licença MIT</p>
+</main></body></html>

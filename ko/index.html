@@ -1,0 +1,221 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code·Codex CLI 커스텀 Base URL 설정 가이드 (ANTHROPIC_BASE_URL, config.toml) 및 문제 해결</title><meta name="description" content="Claude Code의 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN, Codex CLI config.toml의 model_providers를 설정해 API 릴레이, LLM 게이트웨이, 프록시에 연결하는 방법. 404, 401, /v1/v1, HTML 응답, wire_api 오류 해결.">
+<link rel="canonical" href="https://ethan-cur.github.io/claude-code-custom-base-url/ko/">
+<link rel="alternate" hreflang="en" href="https://ethan-cur.github.io/claude-code-custom-base-url/">
+<link rel="alternate" hreflang="zh" href="https://ethan-cur.github.io/claude-code-custom-base-url/zh/">
+<link rel="alternate" hreflang="ru" href="https://ethan-cur.github.io/claude-code-custom-base-url/ru/">
+<link rel="alternate" hreflang="pt" href="https://ethan-cur.github.io/claude-code-custom-base-url/pt/">
+<link rel="alternate" hreflang="ko" href="https://ethan-cur.github.io/claude-code-custom-base-url/ko/">
+<link rel="alternate" hreflang="x-default" href="https://ethan-cur.github.io/claude-code-custom-base-url/">
+<style>body{margin:0;font:16px/1.65 system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans",sans-serif;color:#1f2328}main{max-width:920px;margin:0 auto;padding:22px 18px 60px}
+a{color:#0969da}nav{font-size:14px;padding:8px 0;border-bottom:1px solid #d8dee4;margin-bottom:8px}pre{background:#f6f8fa;padding:12px;border-radius:6px;overflow:auto;font:13px/1.45 ui-monospace,Menlo,Consolas,monospace}
+code{background:#f6f8fa;padding:1px 4px;border-radius:4px;font-size:90%}pre code{background:none;padding:0}table{border-collapse:collapse;display:block;overflow:auto}
+td,th{border:1px solid #d0d7de;padding:6px 10px;vertical-align:top}th{background:#f6f8fa}h1,h2{border-bottom:1px solid #d8dee4;padding-bottom:.3em}</style></head>
+<body><main><nav><a href="https://ethan-cur.github.io/claude-code-custom-base-url/" hreflang="en">English</a> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/zh/" hreflang="zh">中文</a> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/ru/" hreflang="ru">Русский</a> · <a href="https://ethan-cur.github.io/claude-code-custom-base-url/pt/" hreflang="pt">Português</a> · <b>한국어</b> · <a href="https://github.com/ethan-cur/claude-code-custom-base-url">GitHub</a></nav>
+<h1>Claude Code와 Codex CLI에 커스텀 Base URL 설정하기</h1>
+<p><strong>Claude Code</strong>와 <strong>Codex CLI</strong>(그리고 모든 OpenAI SDK)를 API 릴레이, LLM 게이트웨이, 사내 프록시, 자체 라우터에 연결하는 방법과 실제로 자주 만나는 오류 해결표입니다. 특정 업체에 종속되지 않으며, 2026년 11월 공식 문서 기준으로 확인했습니다.</p>
+<p>도구: <a href="https://ethan-cur.github.io/claude-code-config-generator/" rel="nofollow">설정 생성기</a> · <a href="https://ethan-cur.github.io/llm-endpoint-check/" rel="nofollow">엔드포인트 점검 스크립트</a></p>
+<h2>1. 어떤 URL을 어디에</h2>
+<p>각 클라이언트는 Base URL 뒤에 자기 경로를 자동으로 붙입니다. "안 된다"는 문제의 대부분은 접두사 오류입니다.</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>클라이언트</th>
+<th>설정</th>
+<th>클라이언트가 붙이는 경로</th>
+<th>일반적인 값</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code</td>
+<td><code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td><code class="notranslate">/v1/messages</code></td>
+<td><code class="notranslate">https://gateway.example.com</code> (<code class="notranslate">/v1</code> 없이)</td>
+</tr>
+<tr>
+<td>Codex CLI</td>
+<td><code class="notranslate">[model_providers.&lt;id&gt;]</code>의 <code class="notranslate">base_url</code></td>
+<td><code class="notranslate">/responses</code></td>
+<td><code class="notranslate">https://gateway.example.com/v1</code></td>
+</tr>
+<tr>
+<td>OpenAI SDK, Cursor, Cline (OpenAI 모드)</td>
+<td><code class="notranslate">base_url</code> / <code class="notranslate">baseURL</code> / <code class="notranslate">OPENAI_BASE_URL</code></td>
+<td><code class="notranslate">/chat/completions</code>, <code class="notranslate">/models</code></td>
+<td><code class="notranslate">https://gateway.example.com/v1</code></td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>게이트웨이 문서가 "일반적인 값"보다 우선입니다. 일부 서비스는 자체 접두사(예: <code class="notranslate">/api</code>, <code class="notranslate">/openai</code>)를 씁니다.</p>
+<h2>2. Claude Code</h2>
+<p>Claude Code는 다음 환경 변수를 읽습니다(<a href="https://code.claude.com/docs/en/env-vars" rel="nofollow">공식 목록</a>):</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>변수</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td><code class="notranslate">api.anthropic.com</code> 대신 요청을 보낼 엔드포인트</td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_AUTH_TOKEN</code></td>
+<td><code class="notranslate">Authorization: Bearer &lt;값&gt;</code>으로 전송. 대부분의 릴레이가 이 방식</td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_API_KEY</code></td>
+<td><code class="notranslate">X-Api-Key</code>로 전송. 게이트웨이가 이 헤더를 요구할 때</td>
+</tr>
+<tr>
+<td><code class="notranslate">ANTHROPIC_MODEL</code></td>
+<td>선택: 시작 모델</td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>macOS / Linux:</p>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> ANTHROPIC_BASE_URL=<span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span>
+<span class="pl-k">export</span> ANTHROPIC_AUTH_TOKEN=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+claude -p <span class="pl-s"><span class="pl-pds">"</span>Reply with: pong<span class="pl-pds">"</span></span></pre></div>
+<p>Windows PowerShell (영구 설정, 이후 새 터미널 열기):</p>
+<div class="highlight highlight-source-powershell"><pre class="notranslate">[<span class="pl-k">Environment</span>]::SetEnvironmentVariable(<span class="pl-s"><span class="pl-pds">"</span>ANTHROPIC_BASE_URL<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>User<span class="pl-pds">"</span></span>)
+[<span class="pl-k">Environment</span>]::SetEnvironmentVariable(<span class="pl-s"><span class="pl-pds">"</span>ANTHROPIC_AUTH_TOKEN<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span><span class="pl-k">,</span> <span class="pl-s"><span class="pl-pds">"</span>User<span class="pl-pds">"</span></span>)</pre></div>
+<p>또는 <code class="notranslate">~/.claude/settings.json</code>에 넣으면 터미널, VS Code, JetBrains 어디서 실행해도 적용됩니다:</p>
+<div class="highlight highlight-source-json"><pre class="notranslate">{
+  <span class="pl-ent">"env"</span>: {
+    <span class="pl-ent">"ANTHROPIC_BASE_URL"</span>: <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com<span class="pl-pds">"</span></span>,
+    <span class="pl-ent">"ANTHROPIC_AUTH_TOKEN"</span>: <span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+  }
+}</pre></div>
+<p>알아둘 점:</p>
+<ul>
+<li>대부분의 세션에서 <code class="notranslate">settings.json</code>의 <code class="notranslate">env</code> 값이 셸의 같은 변수보다 우선합니다. 변경이 "적용되지 않으면" 두 곳을 모두 확인하세요.</li>
+<li>게이트웨이가 둘 다 요구하지 않는 한 <code class="notranslate">ANTHROPIC_AUTH_TOKEN</code>과 <code class="notranslate">ANTHROPIC_API_KEY</code> 중 하나만 설정하세요.</li>
+<li>공식 문서에 따르면 <code class="notranslate">ANTHROPIC_BASE_URL</code>이 <code class="notranslate">api.anthropic.com</code> 이외의 호스트를 가리키면 Remote Control이 비활성화됩니다.</li>
+</ul>
+<h2>3. Codex CLI</h2>
+<p><code class="notranslate">~/.codex/config.toml</code>에 커스텀 provider를 추가합니다(<a href="https://developers.openai.com/codex/config-advanced" rel="nofollow">공식 문서</a>):</p>
+<div class="highlight highlight-source-toml"><pre class="notranslate"><span class="pl-smi">model_provider</span> = <span class="pl-s"><span class="pl-pds">"</span>mygateway<span class="pl-pds">"</span></span>
+<span class="pl-smi">model</span> = <span class="pl-s"><span class="pl-pds">"</span>MODEL_ID<span class="pl-pds">"</span></span>
+
+[<span class="pl-en">model_providers</span>.<span class="pl-en">mygateway</span>]
+<span class="pl-smi">name</span> = <span class="pl-s"><span class="pl-pds">"</span>mygateway<span class="pl-pds">"</span></span>
+<span class="pl-smi">base_url</span> = <span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com/v1<span class="pl-pds">"</span></span>
+<span class="pl-smi">wire_api</span> = <span class="pl-s"><span class="pl-pds">"</span>responses<span class="pl-pds">"</span></span>
+<span class="pl-smi">env_key</span> = <span class="pl-s"><span class="pl-pds">"</span>MYGATEWAY_API_KEY<span class="pl-pds">"</span></span></pre></div>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> MYGATEWAY_API_KEY=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span>
+codex</pre></div>
+<p>참고:</p>
+<ul>
+<li>Codex는 <code class="notranslate">POST {base_url}/responses</code>를 보냅니다. 현재 Codex는 <code class="notranslate">wire_api = "responses"</code>만 지원하므로 엔드포인트가 OpenAI <strong>Responses</strong> API를 구현해야 합니다. Chat Completions만 지원하는 게이트웨이는 안 됩니다.</li>
+<li>일부 서비스는 <code class="notranslate">env_key</code> 대신 <code class="notranslate">requires_openai_auth = true</code>와 <code class="notranslate">{"OPENAI_API_KEY": "YOUR_API_KEY"}</code>가 담긴 <code class="notranslate">~/.codex/auth.json</code>을 안내합니다. 한 가지 방법만 쓰세요.</li>
+<li><code class="notranslate">openai</code>, <code class="notranslate">ollama</code>, <code class="notranslate">lmstudio</code>는 예약된 provider ID입니다. 내장 OpenAI provider만 프록시로 돌리려면 공식 문서의 <code class="notranslate">openai_base_url = "..."</code>을 쓰면 됩니다.</li>
+</ul>
+<h2>4. OpenAI SDK와 기타 클라이언트</h2>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-k">export</span> OPENAI_BASE_URL=<span class="pl-s"><span class="pl-pds">"</span>https://gateway.example.com/v1<span class="pl-pds">"</span></span>
+<span class="pl-k">export</span> OPENAI_API_KEY=<span class="pl-s"><span class="pl-pds">"</span>YOUR_API_KEY<span class="pl-pds">"</span></span></pre></div>
+<div class="highlight highlight-source-python"><pre class="notranslate"><span class="pl-k">from</span> <span class="pl-s1">openai</span> <span class="pl-k">import</span> <span class="pl-v">OpenAI</span>
+<span class="pl-s1">client</span> <span class="pl-c1">=</span> <span class="pl-en">OpenAI</span>(<span class="pl-s1">base_url</span><span class="pl-c1">=</span><span class="pl-s">"https://gateway.example.com/v1"</span>, <span class="pl-s1">api_key</span><span class="pl-c1">=</span><span class="pl-s">"YOUR_API_KEY"</span>)</pre></div>
+<h2>5. 도구를 의심하기 전에 엔드포인트부터 테스트</h2>
+<div class="highlight highlight-source-shell"><pre class="notranslate"><span class="pl-c"><span class="pl-c">#</span> OpenAI 측: 정상 API는 키 없이 401 JSON, 키가 있으면 모델 목록을 반환</span>
+curl -sS https://gateway.example.com/v1/models -H <span class="pl-s"><span class="pl-pds">"</span>Authorization: Bearer <span class="pl-smi">$KEY</span><span class="pl-pds">"</span></span>
+
+<span class="pl-c"><span class="pl-c">#</span> Anthropic 측 (Claude Code가 호출하는 경로)</span>
+curl -sS https://gateway.example.com/v1/messages \
+  -H <span class="pl-s"><span class="pl-pds">"</span>Authorization: Bearer <span class="pl-smi">$KEY</span><span class="pl-pds">"</span></span> -H <span class="pl-s"><span class="pl-pds">"</span>anthropic-version: 2023-06-01<span class="pl-pds">"</span></span> \
+  -H <span class="pl-s"><span class="pl-pds">"</span>content-type: application/json<span class="pl-pds">"</span></span> \
+  -d <span class="pl-s"><span class="pl-pds">'</span>{"model":"MODEL_ID","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}<span class="pl-pds">'</span></span></pre></div>
+<p>또는 <a href="https://github.com/ethan-cur/llm-endpoint-check">llm-endpoint-check</a>로 모든 점검과 지연 시간 측정을 한 번에.</p>
+<h2>6. 문제 해결</h2>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>증상</th>
+<th>가능한 원인</th>
+<th>해결</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="notranslate">404 Not Found</code></td>
+<td>접두사 오류</td>
+<td>Claude Code: Base URL에 <code class="notranslate">/v1</code> <strong>없이</strong>. Codex / SDK: 보통 <code class="notranslate">/v1</code> <strong>포함</strong>. 게이트웨이 문서를 따르세요</td>
+</tr>
+<tr>
+<td>URL에 <code class="notranslate">/v1/v1/</code></td>
+<td><code class="notranslate">/v1</code> 중복</td>
+<td>Base URL에서 <code class="notranslate">/v1</code> 제거</td>
+</tr>
+<tr>
+<td><code class="notranslate">401</code> / <code class="notranslate">invalid x-api-key</code></td>
+<td>키 또는 헤더 종류 오류</td>
+<td><code class="notranslate">ANTHROPIC_AUTH_TOKEN</code>(Bearer)과 <code class="notranslate">ANTHROPIC_API_KEY</code>(X-Api-Key)를 바꿔 보기; 키에 공백이나 따옴표가 없는지 확인</td>
+</tr>
+<tr>
+<td>HTTP 200인데 HTML 페이지</td>
+<td>API 경로가 아니거나, 키가 없을 때 게이트웨이가 안내 페이지를 보여줌</td>
+<td>경로 수정; <em>현재</em> 터미널에 키 변수가 설정됐는지 확인</td>
+</tr>
+<tr>
+<td><code class="notranslate">301</code> / <code class="notranslate">302</code></td>
+<td><code class="notranslate">http</code>/<code class="notranslate">https</code>, 끝 슬래시</td>
+<td>최종 URL 사용. 많은 클라이언트가 리디렉션 시 POST 본문을 버립니다</td>
+</tr>
+<tr>
+<td><code class="notranslate">model not found</code> / <code class="notranslate">model not available on this endpoint</code></td>
+<td>해당 프로토콜에서 제공하지 않는 모델</td>
+<td><code class="notranslate">GET /models</code>의 ID 사용. 많은 릴레이에서 Claude는 Anthropic 경로로만 제공</td>
+</tr>
+<tr>
+<td>Codex: <code class="notranslate">wire_api</code> 또는 <code class="notranslate">/chat/completions</code> 관련 오류</td>
+<td><code class="notranslate">wire_api = "chat"</code>이 든 옛 설정</td>
+<td><code class="notranslate">wire_api = "responses"</code>와 Responses 지원 엔드포인트 사용</td>
+</tr>
+<tr>
+<td>Claude Code가 계속 구독 계정을 사용</td>
+<td>Base URL이 적용되지 않음</td>
+<td><code class="notranslate">settings.json</code>의 <code class="notranslate">env</code> 확인, <code class="notranslate">claude</code> 재시작, Windows는 새 터미널</td>
+</tr>
+<tr>
+<td>멈췄다가 타임아웃</td>
+<td>네트워크 / 방화벽 / 지역</td>
+<td>게이트웨이의 다른 지역 엔드포인트 사용; 사내 프록시 뒤라면 <code class="notranslate">HTTPS_PROXY</code> 설정</td>
+</tr>
+<tr>
+<td><code class="notranslate">429</code> / <code class="notranslate">402</code></td>
+<td>속도 제한 / 할당량</td>
+<td>기다리거나 동시성을 낮추거나 충전</td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<h2>7. 예시: qcode.cc</h2>
+<p>qcode.cc(이 페이지 관리자)는 키 하나로 두 프로토콜을 모두 지원하며, 경로 접두사로 구분하고 호스트가 세 개입니다(<code class="notranslate">api.qcode.cc</code> 글로벌 라우팅, <code class="notranslate">asia.qcode.cc</code>, <code class="notranslate">us.qcode.cc</code>). <a href="https://docs.qcode.cc/docs/getting-started/endpoints-and-api-paths" rel="nofollow">공식 문서</a> 기준 값:</p>
+<markdown-accessiblity-table><table role="table">
+<thead>
+<tr>
+<th>클라이언트</th>
+<th>값</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Claude Code <code class="notranslate">ANTHROPIC_BASE_URL</code></td>
+<td><code class="notranslate">https://api.qcode.cc/api</code></td>
+</tr>
+<tr>
+<td>Codex CLI <code class="notranslate">base_url</code></td>
+<td><code class="notranslate">https://api.qcode.cc/openai</code></td>
+</tr>
+<tr>
+<td>OpenAI SDK <code class="notranslate">base_url</code></td>
+<td><code class="notranslate">https://api.qcode.cc/openai/v1</code></td>
+</tr>
+</tbody>
+</table></markdown-accessiblity-table>
+<p>Claude 모델은 Anthropic 경로로만, GPT 모델은 OpenAI 경로로만 제공됩니다. 자세히: <a href="https://qcode.cc" rel="nofollow">https://qcode.cc</a></p>
+<hr>
+<p>이 페이지는 Claude Code와 Codex CLI용 API 릴레이인 <a href="https://qcode.cc" rel="nofollow">qcode.cc</a> 운영팀이 관리합니다. 7절을 제외한 모든 내용은 어떤 엔드포인트에도 적용됩니다. 수정 제안은 <a href="https://github.com/ethan-cur/claude-code-custom-base-url">GitHub</a>로. 연락처: <a href="mailto:hi@qcode.cc">hi@qcode.cc</a> · MIT 라이선스</p>
+</main></body></html>
